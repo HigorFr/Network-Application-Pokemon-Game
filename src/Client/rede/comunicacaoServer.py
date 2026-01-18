@@ -1,55 +1,32 @@
 import socket
-import json
+import threading
 import logging
+import queue
+from rede.network import Network
 
 
 
 #Isso aqui é só uma camada a mais de abstração para comunicações diretas com o servidor, tudo bem autoexplicativo
 
 class ServerClient:
-    def __init__(self, server_ip, server_port):
+    def __init__(self, server_ip, server_port, playerinfo):
         self.server_ip = server_ip
         self.server_port = server_port
+        self.playerinfo = playerinfo
 
-    #send_json agora detecta erros e retorna True/False dependendo
-    @staticmethod
-    def send_json(sock, obj):
-        """Envia um objeto JSON e retorna True em caso de sucesso, False se a conexão falhar."""
         try:
-            line = (json.dumps(obj) + "\n").encode()
-            sock.sendall(line)
-            return True
-        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, OSError):
-            return False
+            self.server_sock = self.register(playerinfo.my_name, playerinfo.p2p_port, playerinfo.udp_port)
+        except Exception:
+            logging.info("Erro, tente colocar um servidor válido")
 
-    
-    #recv_json agora lida com erros de forma mais robusta
-    @staticmethod
-    def recv_json(sock):
-        """Recebe um objeto JSON e retorna None se a conexão falhar."""
-        buf = b""
-        sock.settimeout(5.0)  #adiciona timeout para evitar bloqueio eterno
-        try:
-            while True:
-                ch = sock.recv(1)
-                if not ch:
-                    return None  #Conexão fechada
-                if ch == b"\n":
-                    break
-                buf += ch
-        except (ConnectionAbortedError, ConnectionResetError, OSError, socket.timeout):
-            return None
-        finally:
-            sock.settimeout(None)  #Remove o timeout
-        try:
-            return json.loads(buf.decode())
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            return None
+        #Inicia Keepalive
+        keepalive_queue = queue()
+        threading.Thread(target=Network.send_keepalive, args=(self.server_sock, keepalive_queue), daemon=True).start()
+        if keepalive_queue.get() == 'Erro': self.close()
 
 
     def register(self, name, p2p_port, pk_b64, udp_port):
         try:
-            
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(5)
             s.connect((self.server_ip, self.server_port))
@@ -60,8 +37,7 @@ class ServerClient:
             raise
 
 
-
-        if not self.send_json(s, {
+        if not Network.send_json(s, {
             "cmd": "REGISTER",
             "name": name,
             "p2p_port": p2p_port,
@@ -71,7 +47,7 @@ class ServerClient:
             logging.error("Falha ao enviar registro para o servidor.")
             return None
 
-        resp = self.recv_json(s)
+        resp = Network.recv_json(s)
         if not resp or resp.get("type") != "OK":
             logging.error("Falha ao registrar no servidor: %s", resp)
             s.close()
@@ -80,14 +56,62 @@ class ServerClient:
         logging.info("Registrado no servidor com sucesso")
         return s
 
-    #O random, não é nadamais que a mensagem do match sem o argumento de target
+    
+    def list(self):
+        if not Network.send_json(self.server_sock, {"cmd": "LIST"}):
+            logging.error("Falha ao enviar comando LIST para o servidor")
+            return 0;
+
+        resp = Network.recv_json(self.server_sock)
+        if resp and resp.get("type") == "LIST":
+            players = resp.get("players", [])
+            if players:
+                print("\n--- Jogadores Online ---")
+                for player in players:
+                    print(f"  {player}")
+                print("-------------------------")
+            else:
+                print("\nNão há jogadores online no momento.")
+        else:
+            logging.error("Resposta inválida do servidor para LIST: %s", resp)
+
+
+    def stats(self):
+        ServerClient.send_json(self.server_sock, {"cmd": "GET_STATS"})
+        resp = ServerClient.recv_json(self.server_sock)
+        if resp and resp.get("type") == "STATS":
+            print(f"\n--- Suas Estatísticas ---")
+            print(f"  Vitórias: {resp.get('wins', 0)}")
+            print(f"  Derrotas: {resp.get('losses', 0)}")
+            print(f"-------------------------")
+        else:
+            print("Erro ao obter estatísticas:", resp)
+
+
+    def ranking(self):
+        ServerClient.send_json(self.server_sock, {"cmd": "RANKING"})
+        resp = ServerClient.recv_json(self.server_sock)
+        if resp and resp.get("type") == "RANKING":
+            print("\n--- Ranking de Jogadores (por Vitórias) ---")
+            for i, player in enumerate(resp.get("ranking", []), 1):
+                print(f"  {i}. {player['name']} - Vitórias: {player['wins']}, Derrotas: {player['losses']}")
+            print(f"-------------------------------------------")
+        else:
+            print("Erro ao obter ranking:", resp)
+
+
+    def close(self):
+        self.server_sock.close()
+
+
+    #O random, não é nada mais que a mensagem do match sem o argumento de target
     #o servidor fica responsavel de enviar para alguem aleaorio
-    def match(self, sock, target=None):
+    def match(self, target=None):
         cmd = "CHALLENGE" if target else "MATCH_RANDOM"
-        if not self.send_json(sock, {"cmd": cmd, "target": target}):
+        if not Network.send_json(self.server_sock, {"cmd": cmd, "target": target}):
             return None
 
-        resp = self.recv_json(sock)
+        resp = Network.recv_json(self.server_sock)
         if not resp:
             return None
 
@@ -99,3 +123,13 @@ class ServerClient:
             return None
 
         return None
+
+
+    def send_match_result(self, winner):
+        Network.send_json(self.server_sock, {
+            "cmd": "RESULT", 
+            "me": self.state.my_player_name, 
+            "opponent": self.state.opp_player_name, 
+            "winner": winner
+        })
+        Network.recv_json(self.server_sock) # Espera a confirmação do servidor

@@ -124,3 +124,37 @@ class PokemonDB:
         #Retorna uma lista com os nomes de todos os Pokémon disponíveis (acho que essa função nem é mais usada)
         return [p.name for p in self.pokemons.values()]
 
+
+    def choose_pokemon(self, input_queue):
+        print("\n--- Escolha dentre esses Pokémon para a batalha! ---")
+        all_pokemons = self.pokedex.get_all_names()
+
+        # Seleciona 10 Pokémon aleatórios (ou menos, se tiver menos de 10 disponíveis)
+        available_pokemons = random.sample(all_pokemons, k=min(10, len(all_pokemons)))
+        
+        for i, name in enumerate(available_pokemons, 1):
+            print(f"  {i}. {name}")
+        print("Digite o número do Pokémon escolhido: ", end="", flush=True)
+
+        while True:
+            try:
+                #espera até 60 segundos pela escolha do jogador
+                choice = input_queue.get(timeout=60)
+                
+                if not choice:
+                    continue
+                
+                choice_idx = int(choice) - 1
+                
+                if 0 <= choice_idx < len(available_pokemons):
+                    chosen_name = available_pokemons[choice_idx]
+                    chosen_pokemon = self.get_pokemon(chosen_name)
+                    print(f"Você escolheu {chosen_pokemon.name}!")
+                    return chosen_pokemon
+                else:
+                    print("Número inválido. Tente novamente: ", end="", flush=True)
+            except input_queue.Empty:
+                print("\nTempo para escolha esgotado.")
+                return None
+            except (ValueError, IndexError):
+                print("\nEntrada inválida. Por favor, digite um número da lista: ", end="", flush=True)

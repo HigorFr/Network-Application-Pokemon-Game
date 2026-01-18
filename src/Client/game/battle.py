@@ -10,6 +10,9 @@ from game.move import Move
 #Gerenciador de batalha, recebe as comunicações e vai mudando o contexto
 
 class Battle:    
+    
+    
+    
     class State:
         def __init__(self, my_player_name: str, opp_player_name: str, my_pokemon: Pokemon, opp_pokemon: Pokemon, my_turn: bool):
             self.my_player_name = my_player_name
@@ -76,7 +79,6 @@ class Battle:
 
 
 
-
         def apply_move(self, move, by_me):
             with self.lock:
                 if by_me:
@@ -101,84 +103,38 @@ class Battle:
 
 
 
-
-
-
-
     ### MUDANÇA: O construtor agora aceita os nomes dos jogadores ###
-    def __init__(self, my_player_name: str, opp_player_name: str, my_pokemon: Pokemon, p2p_port, opp_info, dial, network, crypto, server_sock, input_queue, pokedex):
-        self.my_player_name = my_player_name
-        self.opp_player_name = opp_player_name
-        self.my_pokemon = my_pokemon
-        self.p2p_port = p2p_port
-        self.opp_info = opp_info
+    def __init__(self, oponent_client, dial, context, my_pokemon):
+        self.playerinfo = context.playerinfo
+        self.challenge_queue = context.challenge_queue
+        self.input_queue = context.input_queue
+        self.server = context.server       
+        self.battle_started = context.battle_started
+        self.opponent_client = oponent_client
         self.dial = dial
-        self.network = network
-        self.crypto = crypto
-        self.server_sock = server_sock
-    
-        self.shared_key = None
-        self.conn = None
-        self.fileobj = None
-        self.input_queue = input_queue
-        self.pokedex = pokedex
-        self.state = None
+        self.my_pokemon = my_pokemon
 
-      
     def prepare(self):
-        if self.dial:
-            self.conn = self.network.p2p_connect(self.opp_info['ip'], int(self.opp_info['p2p_port']))
-        else:
-            self.conn = self.network.p2p_listen(self.p2p_port, backlog=1, timeout=10)
-        if not self.conn: return False
 
-        self.fileobj = self.conn.makefile("rwb")
-        self.shared_key = self.crypto.shared_key(self.opp_info['public_key'])
-        
-        logging.debug(f"Shared key e troca de Pokémon feitos com sucesso: { self.shared_key }")
+        self.opponent_client.connect(self.dial)
 
-        my_choice_msg = Crypto.encrypt_json(self.shared_key, {"type": "POKEMON_CHOICE", "name": self.my_pokemon.name})
-        Network.send_line(self.conn, my_choice_msg.encode())
-
-        self.conn.settimeout(10.0)
-        opp_choice_line = Network.recv_line(self.fileobj)
-        if not opp_choice_line:
-            logging.error("Conexão P2P perdida ao receber escolha do oponente.")
-            return False
-        
-        opp_choice_msg = Crypto.decrypt_json(self.shared_key, opp_choice_line.decode())
-        if not opp_choice_msg or opp_choice_msg.get("type") != "POKEMON_CHOICE":
-            logging.error("Falha ao receber a escolha de Pokémon do oponente."); return False
-
-        opp_pokemon_name = opp_choice_msg.get("name")
-        opp_pokemon = self.pokedex.get_pokemon(opp_pokemon_name)
+        opponent_pokemon = self.opponent_client.trade_pokemon_info(self.my_pokemon)
        
-        if not opp_pokemon:
-            logging.error(f"Oponente escolheu um Pokémon inválido: {opp_pokemon_name}"); return False
+
+        if not opponent_pokemon:
+            logging.error(f"Oponente escolheu um Pokémon inválido: {opponent_pokemon}"); return False
             
         
-        my_turn = self.my_pokemon.speed > opp_pokemon.speed
-        if(self.my_pokemon.speed == opp_pokemon.speed): my_turn = self.dial
+        my_turn = self.my_pokemon.speed > opponent_pokemon.speed
+        if(self.my_pokemon.speed == opponent_pokemon.speed): my_turn = self.dial
 
         self.state = Battle.State(
             my_player_name=self.my_player_name, opp_player_name=self.opp_player_name,
-            my_pokemon=self.my_pokemon, opp_pokemon=opp_pokemon, my_turn=my_turn
+            my_pokemon=self.my_pokemon, opp_pokemon=opponent_pokemon, my_turn=my_turn
         )
         
         return True
 
-
-    #aqui ele utiliza a criptografia para enviar os json
-    def send_encrypted(self, obj):
-        assert self.shared_key is not None
-        msg = Crypto.encrypt_json(self.shared_key, obj).encode()
-        Network.send_line(self.conn, msg)
-
-    def recv_encrypted(self):
-        assert self.shared_key is not None
-        line = Network.recv_line(self.fileobj)
-        if line is None: return None
-        return Crypto.decrypt_json(self.shared_key, line.decode())
 
 
     #Aqui o loop do jogo principal inicia
@@ -213,10 +169,7 @@ class Battle:
                         logging.info("Movimento inválido"); continue
                 
                 
-                    self.send_encrypted({"type": "MOVE", "name": move})
-                
-
-                    #para economizar mensagem, não é enviado todo objeto move, só a string, então o get_move_by_name faz uma busca por esse nome e devolve o objetio
+                    self.opponent_client.send_move(move)
                     move_obj = self.pokedex.get_move_by_name(move)      
                     self.state.apply_move(move_obj, True)
                 
@@ -226,10 +179,13 @@ class Battle:
                 
                 
                 #roda se é o turno do oponentes
+                
                 else:
+                
                     self.conn.settimeout(70.0)
                     logging.info("Aguardando movimento do oponente...")
-                    msg = self.recv_encrypted()
+                    msg = self.opponent_client.recv_encrypted()
+                    
                     if msg is None:
                         logging.warning("Conexão P2P encerrada pelo oponente."); break
                     if msg.get('type') == 'MOVE':
@@ -263,13 +219,7 @@ class Battle:
         ### MUDANÇA CRÍTICA: Apenas o vencedor envia o resultado ###
         if winner == self.state.my_player_name:
             logging.debug("Eu sou o vencedor. Reportando o resultado ao servidor.")
-            ServerClient.send_json(self.server_sock, {
-                "cmd": "RESULT", 
-                "me": self.state.my_player_name, 
-                "opponent": self.state.opp_player_name, 
-                "winner": winner
-            })
-            ServerClient.recv_json(self.server_sock) # Espera a confirmação do servidor
+            self.server.send_match_result(self, winner)
         else:
             logging.debug("Eu não sou o vencedor. Não irei reportar o resultado.")
 

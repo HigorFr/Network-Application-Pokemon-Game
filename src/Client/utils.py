@@ -21,3 +21,10 @@ class Utils:
             return int(value)
         except ValueError:
             return default
+        
+
+
+        #funçaõ auxiliar para os inputs
+    def input_default(prompt, default):
+        s = input(f"{prompt}").strip()
+        return s if s else default

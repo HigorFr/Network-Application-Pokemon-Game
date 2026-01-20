@@ -28,6 +28,7 @@ class PokemonDB:
         self.MOVE_FILE = os.path.join(path, "move-data.csv")
         self.POKEMON_FILE = os.path.join(path, "pokemon-data.csv")
 
+        self.load()
 
 
 
@@ -127,7 +128,7 @@ class PokemonDB:
 
     def choose_pokemon(self, input_queue):
         print("\n--- Escolha dentre esses Pokémon para a batalha! ---")
-        all_pokemons = self.pokedex.get_all_names()
+        all_pokemons = self.get_all_names()
 
         # Seleciona 10 Pokémon aleatórios (ou menos, se tiver menos de 10 disponíveis)
         available_pokemons = random.sample(all_pokemons, k=min(10, len(all_pokemons)))

@@ -4,26 +4,28 @@ import event
 from rede.crypto import Crypto
 from utils import Utils
 from game.battle import Battle
-from network import Network
+from rede.network import Network
 
 class OpponentClient:
         #Envia desafio e espera resposta
 
 
-    def __init__(self, opp, battle_started, event_queue, network):
+    def __init__(self, opp, playerinfo, battle_started, event_queue, network):
         self.opp = opp
         self.battle_started = battle_started
         self.event_queue = event_queue
         self.network = network
         self.fileobj = None
         self.shared_key = None
+        self.playerinfo = playerinfo
+        self.timeout_request = 20
 
-    def enviar_desafio(self, queue_resposta_desafio):
+    def enviar_desafio(self, queue_resposta_desafio, my_pokemon):
             
         if self.battle_started.is_set(): return
         op_name = self.opp['name']
-        dest_udp_port =  self.opp.get('udp_port', self.udp_port)
-        msg = { "type": "DES", "opponent": { "name": self.my_name, "ip": None, "udp_port": self.udp_port, "p2p_port": self.p2p_port, "public_key": self.crypto.public_key_b64() } }
+        dest_udp_port =  self.opp['udp_port']
+        msg = { "type": "DES", "opponent": { "name": self.playerinfo.my_name, "ip": None, "udp_port": self.playerinfo.udp_port, "p2p_port": self.playerinfo.p2p_port, "public_key": self.network.crypto.public_key_b64() } }
         
         try:
             self.network.udp_send(msg, ip= self.opp.get('ip', '255.255.255.255'), port=dest_udp_port)
@@ -39,8 +41,6 @@ class OpponentClient:
             resposta = queue_resposta_desafio.get(timeout=self.timeout_request)
         except queue.Empty:
             if self.battle_started.is_set(): return
-            Utils.adicionar_fila(self.input_queue, 'END')
-            Utils.drenar_fila(self.input_queue)
             self.battle_started.clear()
             logging.info("Timeout aguardando resposta de %s", op_name); return
 
@@ -49,7 +49,9 @@ class OpponentClient:
             
         if resposta and resposta.get('res') == 'ACE':
             logging.info("%s aceitou. Iniciando batalha.", op_name)
-            self.event_queue.put(event.EventoBatalha(self))
+
+            self.event_queue.put(event.EventoBatalha(self, my_pokemon, True))
+            
             
         else:
             logging.info("%s recusou o desafio.", op_name)
@@ -59,8 +61,8 @@ class OpponentClient:
 
 
     def enviar_aceitar_desafio(self, my_pokemon):
-        res = {"type": "RES", "opp": self.my_name, "res": "ACE"}
-        self.network.udp_send(res, ip= self.opp.get('ip', '255.255.255.255'), port= self.opp.get('udp_port', self.udp_port))
+        res = {"type": "RES", "opp": self.playerinfo.my_name, "res": "ACE"}
+        self.network.udp_send(res, ip= self.opp.get('ip', '255.255.255.255'), port= self.opp.get('udp_port', self.playerinfo.udp_port))
         logging.info("Aceitei desafio de %s",  self.opp['name'])
 
 
@@ -68,7 +70,7 @@ class OpponentClient:
         #Observa que ele já prepara a batalha depois de aceitar, mesmo se quem tiver desafiado a batalha já tiver iniciado com outra pessoa
             #Nesse caso quem enviou vai ficar esperando sem respota até dar timeout e acabar a batalha, dava para arrumar isso fazendo uma nova mensagem (tipo ack) que volta de quem desafiou para confirmar
         
-        self.event_queue.put(event.EventoBatalha(self, my_pokemon))
+        self.event_queue.put(event.EventoBatalha(self, my_pokemon, False))
 
 
 
@@ -76,13 +78,14 @@ class OpponentClient:
     def connect(self, dial):
         if dial:
             conn = Network.p2p_connect(self.opp['ip'], int(self.opp['p2p_port']))
+        
         else:
-            conn = Network.p2p_listen(self.p2p_port, backlog=1, timeout=10)
+            conn = Network.p2p_listen(self.playerinfo.p2p_port, backlog=1, timeout=10)
         if not conn: return False
 
         self.fileobj = conn.makefile("rwb")
-        self.shared_key = self.network.crypto.shared_key(self.opp_info['public_key'])
-        
+        self.shared_key = self.network.crypto.shared_key(self.opp['public_key'])
+        self.conn = conn
         logging.debug(f"Shared key e troca de Pokémon feitos com sucesso: { self.shared_key }")
 
 
@@ -103,9 +106,8 @@ class OpponentClient:
             logging.error("Falha ao receber a escolha de Pokémon do oponente."); return False
 
         opp_pokemon_name = opp_choice_msg.get("name")
-        opponent_pokemon = self.pokedex.get_pokemon(opp_pokemon_name)
-
-        return opponent_pokemon
+        
+        return opp_pokemon_name
 
 
     #aqui ele utiliza a criptografia para enviar os json
@@ -132,7 +134,7 @@ class OpponentClient:
     @staticmethod
     def enviar_rejeitar(my_name,network,opp):
         res = {"type": "RES", "opp": my_name, "res": "NEG"}
-        network.udp_send(res, ip=opp.get('ip', '255.255.255.255'), port=opp.get('udp_port', network.udp_port))
+        network.udp_send(res, ip=opp.get('ip', '255.255.255.255'), port=opp.get('udp_port'))
         logging.info("Recusei desafio de %s", opp['name'])
 
 

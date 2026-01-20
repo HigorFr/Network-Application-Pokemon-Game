@@ -14,7 +14,7 @@ class Network:
         self.BUFFER_SIZE = 4096
  
 
-        self.start_udp_listener(self.udp_handler)
+  
 
   
     #Isso aqui são só funções auxiliares para colocar linhas dentro de um socket qualquer
@@ -73,10 +73,6 @@ class Network:
 
 
 
-
-
-
-    @staticmethod
     def udp_send(self, obj, ip='255.255.255.255', port=None):
         if port is None:
             port = self.udp_broadcast_port
@@ -85,60 +81,63 @@ class Network:
         logging.debug(f"Enviado {data} para {ip}:{port} ")
 
     @staticmethod
-    def p2p_listen(self, port, backlog=1, timeout=None):
+    def p2p_listen(port, backlog=1, timeout=None):
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         listener.bind(("0.0.0.0", port))
         listener.listen(backlog)
         if timeout is not None:
             listener.settimeout(timeout)
-        socket, addr = listener.accept()
+        sock, addr = listener.accept()
         logging.info(f"P2P: conexão aceita {addr}")
         try:
             listener.close()
         except Exception:
             pass
-        return socket
+        return sock
 
     @staticmethod
-    def p2p_connect(self, ip, port, timeout=5.0):
-        socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        socket.settimeout(timeout)
-        socket.connect((ip, port))
+    def p2p_connect(ip, port, timeout=5.0):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+        print(f"{ip}{'='*10}{port}")
+
+        sock.settimeout(timeout)
+        sock.connect((ip, port))
         logging.info(f"P2P: conectado a {(ip, port)}")
-        socket.settimeout(None)
-        return socket
+        sock.settimeout(None)
+        return sock
 
    
 
 
     #Roda em uma thread separada para enviar mensagens periódicas ao servidor e manter a conexão viva.
-    def send_keepalive(sock, queue):
+    def send_keepalive(sock):
         while True:
             time.sleep(20) #Envia a cada 20 segundos (Foi usado mais para teste, mas o tempo poderia ser menor)
-            if not queue.get_battle_started():    
-                try:
+            try:
+                
+                logging.debug("Enviado Keep alive.")
+                if Network.send_json(sock, {"cmd": "KEEPALIVE"}): continue;
                     
-                    logging.debug("Enviado Keep alive.")
-                    if Network.send_json(sock, {"cmd": "KEEPALIVE"}): continue;
-                        
-                    else:
-                        logging.debug("Falha ao enviar keepalive.")
-                        queue.put("erro")
-                        break
+                else:
+                    logging.debug("Falha ao enviar keepalive.")
+                    raise Exception
 
-                except Exception:
-                        logging.debug("Falha ao enviar keepalive.")
-                        queue.put("erro")
-                        break
+            except Exception:
+                    logging.debug("Falha ao enviar keepalive.")
+                    raise Exception
+                    
 
 
 class Udp_handler:
 
-    def __init__(self,player_name, challenge_manager):
+    def __init__(self,player_name, challenge_manager, udp_broadcast_port):
         self.player_name = player_name
         self.challenge_manager = challenge_manager
-        
+        self.udp_broadcast_port = udp_broadcast_port
+        self.BUFFER_SIZE = 4096
+        self.start_udp_listener(self.udp_handler)
 
     #UDP ta sempre ligado, tratando o que recebe pela função UDP_handler
     def start_udp_listener(self, handler):

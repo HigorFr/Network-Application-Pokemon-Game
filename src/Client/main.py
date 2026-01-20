@@ -1,7 +1,7 @@
 import logging, threading, queue, time, sys, queue
 from rede.network import Network
 from rede.comunicacaoServer import ServerClient
-from Client.rede.challengesManager import ChallengesManager
+from rede.challengesManager import ChallengesManager
 from leitor import Leitor
 from game.pokemonDB import PokemonDB
 from utils import Utils
@@ -15,10 +15,10 @@ from rede.network import Udp_handler
 
 
 
-logging.basicConfig(level=logging.INFO, format='\n[%(levelname)s] %(message)s')
+#logging.basicConfig(level=logging.INFO, format='\n[%(levelname)s] %(message)s')
 
 #Para mudar o para debug só descomentar isso
-#logging.basicConfig(level=logging.DEBUG, format='\n[%(levelname)s] %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='\n[%(levelname)s] %(message)s')
 
 
 
@@ -31,15 +31,16 @@ class PlayerInfo:
 
 
 class GameContext:
-    def __init__(self, playerinfo, network, server, pokedex, input_queue, challenge_manager):
-        self.playerinfo = playerinfo, 
-        self.network = network,
-        self.server = server,
-        self.pokedex = pokedex,
-        self.input_queue = input_queue,
-        self.challenge_manager = challenge_manager
+    def __init__(self, playerinfo, network, server, pokedex, input_queue):
+        self.playerinfo = playerinfo
+        self.network = network
+        self.server = server
+        self.pokedex = pokedex
+        self.input_queue = input_queue
         self.battle_started = threading.Event()
         self.event_queue = EventQueue()
+        self.challenge_manager = ChallengesManager(self)
+        self.event_manager = EventManager(self)
 
 def main():
     
@@ -55,7 +56,7 @@ def main():
 
     player = PlayerInfo(my_name, p2p_port, udp_port)
     network = Network(udp_broadcast_port=udp_port)
-    server = ServerClient(player,server_ip, server_port)
+    server = ServerClient(player,server_ip, server_port, network.crypto.public_key_b64())
     pokedex = PokemonDB()
 
     input_queue = queue.Queue()
@@ -63,14 +64,11 @@ def main():
     input_reader.start()
 
     
-
-    challenge_manager = ChallengesManager(server, player, network, input_queue, pokedex)
     
-    context = GameContext(player, network, server, pokedex, input_queue, challenge_manager)
-    
-    Udp_handler(player.my_name, challenge_manager)
+    context = GameContext(player, network, server, pokedex, input_queue)
+    Udp_handler(player.my_name, context.challenge_manager, player.udp_port)
 
-    EventManager(context)
+    context.event_manager.run()
 
 
 if __name__ == '__main__':

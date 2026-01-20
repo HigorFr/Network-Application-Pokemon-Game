@@ -104,22 +104,26 @@ class Battle:
 
 
     ### MUDANÇA: O construtor agora aceita os nomes dos jogadores ###
-    def __init__(self, oponent_client, dial, context, my_pokemon):
+    def __init__(self, oponent_client, context, my_pokemon, dial):
         self.playerinfo = context.playerinfo
-        self.challenge_queue = context.challenge_queue
+        self.challenge_manager = context.challenge_manager
         self.input_queue = context.input_queue
         self.server = context.server       
         self.battle_started = context.battle_started
         self.opponent_client = oponent_client
+        self.opp = oponent_client.opp
         self.dial = dial
         self.my_pokemon = my_pokemon
+        self.pokedex = context.pokedex
 
     def prepare(self):
 
+
+        print(self.dial)
         self.opponent_client.connect(self.dial)
 
-        opponent_pokemon = self.opponent_client.trade_pokemon_info(self.my_pokemon)
-       
+        opponent_pokemon_name = self.opponent_client.trade_pokemon_info(self.my_pokemon)
+        opponent_pokemon = self.pokedex.get_pokemon(opponent_pokemon_name)
 
         if not opponent_pokemon:
             logging.error(f"Oponente escolheu um Pokémon inválido: {opponent_pokemon}"); return False
@@ -129,7 +133,7 @@ class Battle:
         if(self.my_pokemon.speed == opponent_pokemon.speed): my_turn = self.dial
 
         self.state = Battle.State(
-            my_player_name=self.my_player_name, opp_player_name=self.opp_player_name,
+            my_player_name=self.playerinfo.my_name, opp_player_name=self.opp['name'],
             my_pokemon=self.my_pokemon, opp_pokemon=opponent_pokemon, my_turn=my_turn
         )
         
@@ -182,7 +186,7 @@ class Battle:
                 
                 else:
                 
-                    self.conn.settimeout(70.0)
+                    self.opponent_client.conn.settimeout(70.0)
                     logging.info("Aguardando movimento do oponente...")
                     msg = self.opponent_client.recv_encrypted()
                     
@@ -219,7 +223,7 @@ class Battle:
         ### MUDANÇA CRÍTICA: Apenas o vencedor envia o resultado ###
         if winner == self.state.my_player_name:
             logging.debug("Eu sou o vencedor. Reportando o resultado ao servidor.")
-            self.server.send_match_result(self, winner)
+            self.server.send_match_won(self.opp['name'])
         else:
             logging.debug("Eu não sou o vencedor. Não irei reportar o resultado.")
 

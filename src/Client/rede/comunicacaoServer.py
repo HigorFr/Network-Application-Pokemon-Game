@@ -1,7 +1,7 @@
 import socket
 import threading
 import logging
-import queue
+from queue import Queue
 from rede.network import Network
 
 
@@ -9,23 +9,27 @@ from rede.network import Network
 #Isso aqui é só uma camada a mais de abstração para comunicações diretas com o servidor, tudo bem autoexplicativo
 
 class ServerClient:
-    def __init__(self, server_ip, server_port, playerinfo):
+    def __init__(self, playerinfo, server_ip, server_port, pk_b64):
         self.server_ip = server_ip
         self.server_port = server_port
         self.playerinfo = playerinfo
+        self.pk_b64 = pk_b64
 
         try:
-            self.server_sock = self.register(playerinfo.my_name, playerinfo.p2p_port, playerinfo.udp_port)
+            self.server_sock = self.register(self.playerinfo.my_name, self.playerinfo.p2p_port, self.playerinfo.udp_port)
         except Exception:
             logging.info("Erro, tente colocar um servidor válido")
+            logging.debug("Erro ocorreu", exc_info=True)
+            raise Exception
+            
 
         #Inicia Keepalive
-        keepalive_queue = queue()
-        threading.Thread(target=Network.send_keepalive, args=(self.server_sock, keepalive_queue), daemon=True).start()
-        if keepalive_queue.get() == 'Erro': self.close()
+        keepalive_queue = Queue()
+        threading.Thread(target=Network.send_keepalive, args=(self.server_sock,), daemon=True).start()
 
 
-    def register(self, name, p2p_port, pk_b64, udp_port):
+
+    def register(self, name, p2p_port, udp_port):
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(5)
@@ -42,7 +46,7 @@ class ServerClient:
             "name": name,
             "p2p_port": p2p_port,
             "udp_port": udp_port,
-            "public_key": pk_b64
+            "public_key": self.pk_b64
         }):
             logging.error("Falha ao enviar registro para o servidor.")
             return None
@@ -77,8 +81,8 @@ class ServerClient:
 
 
     def stats(self):
-        ServerClient.send_json(self.server_sock, {"cmd": "GET_STATS"})
-        resp = ServerClient.recv_json(self.server_sock)
+        Network.send_json(self.server_sock, {"cmd": "GET_STATS"})
+        resp = Network.recv_json(self.server_sock)
         if resp and resp.get("type") == "STATS":
             print(f"\n--- Suas Estatísticas ---")
             print(f"  Vitórias: {resp.get('wins', 0)}")
@@ -89,8 +93,8 @@ class ServerClient:
 
 
     def ranking(self):
-        ServerClient.send_json(self.server_sock, {"cmd": "RANKING"})
-        resp = ServerClient.recv_json(self.server_sock)
+        Network.send_json(self.server_sock, {"cmd": "RANKING"})
+        resp = Network.recv_json(self.server_sock)
         if resp and resp.get("type") == "RANKING":
             print("\n--- Ranking de Jogadores (por Vitórias) ---")
             for i, player in enumerate(resp.get("ranking", []), 1):
@@ -125,11 +129,11 @@ class ServerClient:
         return None
 
 
-    def send_match_result(self, winner):
+    def send_match_won(self, opponent):
         Network.send_json(self.server_sock, {
             "cmd": "RESULT", 
-            "me": self.state.my_player_name, 
-            "opponent": self.state.opp_player_name, 
-            "winner": winner
+            "me": self.playerinfo.my_name, 
+            "opponent": opponent, 
+            "winner": self.playerinfo.my_name
         })
         Network.recv_json(self.server_sock) # Espera a confirmação do servidor

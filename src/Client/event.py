@@ -58,7 +58,7 @@ class EventoMenu(Evento):
 
                 #DESAFIAR / ALEATORIO / ACEITAR 
                 elif command in ['desafiar', 'aleatorio', 'aceitar']:
-                    self.challenge_manager.handler(command, args[0])
+                    self.challenge_manager.handler(command, args)
 
 
                 #NEGAR

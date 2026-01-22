@@ -1,5 +1,7 @@
 # EP1_Redes
 
+*Readme referente a versão enviada, não a atual*
+
 Este repositório contém o EP1 (primeiro exercício prático) da disciplina de Redes de Computadores. O projeto implementa uma aplicação cliente-servidor, demonstrando conceitos fundamentais de redes, como comunicação via sockets, protocolos de transporte e arquitetura cliente-servidor. O relatório do projeto foi confeccionado utilizando TeX.
 
 ## Estrutura do Repositório
